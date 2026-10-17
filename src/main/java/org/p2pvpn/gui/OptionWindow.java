@@ -23,7 +23,7 @@ package org.p2pvpn.gui;
 
 import java.net.URL;
 import javax.swing.ImageIcon;
-import org.p2pvpn.network.TCPConnection;
+import org.p2pvpn.network.UDPConnection;
 
 /**
  * This window is opened when the user wants to change the options.
@@ -316,8 +316,8 @@ private void btnCancelActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIR
 }//GEN-LAST:event_btnCancelActionPerformed
 
 private void btnResetActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnResetActionPerformed
-	spnBufferSize.getModel().setValue(TCPConnection.DEFAULT_MAX_QUEUE);
-	chkTCPFlush.setSelected(TCPConnection.DEFAULT_TCP_FLUSH);
+	spnBufferSize.getModel().setValue(UDPConnection.DEFAULT_MAX_QUEUE);
+	chkTCPFlush.setSelected(UDPConnection.DEFAULT_TCP_FLUSH);
 }//GEN-LAST:event_btnResetActionPerformed
 
 	public void setNodeName(String name) {
