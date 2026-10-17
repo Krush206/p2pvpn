@@ -491,7 +491,10 @@ public class Router implements RoutungTableListener {
 	 */
 	public void connectionClosed(P2PConnection connection) {
 		synchronized (this) {
-			connections.remove(connection.getRemoteAddr());
+			PeerID id = connection.getRemoteAddr();
+			if (id!=null && connections.get(id)==connection) {
+				connections.remove(id);
+			}
 		}
 		notifyListeners(true);
 	}
