@@ -22,19 +22,21 @@ import org.p2pvpn.network.bittorrent.BitTorrentTracker;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.net.SocketException;
+import java.net.SocketAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.security.MessageDigest;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -58,17 +60,22 @@ public class ConnectionManager implements Runnable {
 
 	final static private double SEND_BUCKET_SIZE = 10 * 1024;
 
+	/** the size of the buffer used to receive datagrams */
+	final static private int RECV_BUFFER_SIZE = 65507;
+
 	private static DHT dht = null;
     
-	private ServerSocket server;						// the ServerSocked to accept connections
-	private int serverPort;								// the local port
+	private DatagramSocket dSock;						// the UDP socket
+	private int serverPort;								// the local (UDP) port
 	private PeerID localAddr;							// the local PeerID
 	private ScheduledExecutorService scheduledExecutor;	// a scheduled exicutor used for various tasks
 	private Router router;								// the Router
     private Connector connector;						// the Connector
 	private UPnPPortForward uPnPPortForward;			// currently not used
 	private BitTorrentTracker bitTorrentTracker;		// the BitTorrentTracker
-    
+
+	private Map<SocketAddress, UDPConnection> connections;	// the active connections
+
 	private String whatIsMyIP;							// the local IP returned by whatismyip.com
 	
 	private AdvProperties accessCfg;					// the access invitation
@@ -79,6 +86,7 @@ public class ConnectionManager implements Runnable {
 
 	private int sendBufferSize;							// the send buffer size
 	private boolean tcpFlush;							// flush after each packet send?
+	private volatile boolean closed;					// is this ConnectionManager closed?
 
 	/**
 	 * Create a new ConnectionManager
@@ -86,8 +94,8 @@ public class ConnectionManager implements Runnable {
 	 * @param serverPort the local server port
 	 */
 	public ConnectionManager(AdvProperties accessCfg, int serverPort) {
-		sendBufferSize = TCPConnection.DEFAULT_MAX_QUEUE;
-		tcpFlush = TCPConnection.DEFAULT_TCP_FLUSH;
+		sendBufferSize = UDPConnection.DEFAULT_MAX_QUEUE;
+		tcpFlush = UDPConnection.DEFAULT_TCP_FLUSH;
 		this.serverPort = serverPort;
 		this.accessCfg = accessCfg;
 		scheduledExecutor = Executors.newScheduledThreadPool(10);
@@ -97,13 +105,16 @@ public class ConnectionManager implements Runnable {
 		bitTorrentTracker = null;
 		//uPnPPortForward = new UPnPPortForward(this);
 		whatIsMyIP = null;
+		connections = new HashMap<SocketAddress, UDPConnection>();
 
 		sendLimit = new TokenBucket(0, SEND_BUCKET_SIZE);
 		recLimit = new TokenBucket(0, SEND_BUCKET_SIZE);
 		pinger = new Pinger(this);
 
 		calcNetworkKey();
-		
+
+		bind();
+
 		(new Thread(this, "ConnectionManager")).start();
 		
 		scheduledExecutor.schedule(new Runnable() {
@@ -112,16 +123,37 @@ public class ConnectionManager implements Runnable {
 
 		try {
 			if (dht==null) {
-				dht = new DHT(new DatagramSocket(serverPort));
+				// the DHT needs its own UDP socket, the tunnel port is already
+				// in use by dSock
+				dht = new DHT(new DatagramSocket(0));
 				dht.start();
 			}
 
 			dht.setSearchID(calcDHTKey());
+			dht.setAnnouncePort(serverPort);
 			dht.setConnectionManager(this);
 		} catch (SocketException e) {
 			Logger.getLogger("").log(Level.SEVERE, "Could not start DHT", e);
 		}
 
+	}
+
+	/**
+	 * Bind the UDP socket used for the tunnel.
+	 */
+	private void bind() {
+		try {
+			dSock = new DatagramSocket(serverPort);
+		} catch (SocketException e) {
+			Logger.getLogger("").log(Level.WARNING, "Could not bind UDP port "+serverPort+
+					", using a random port instead", e);
+			try {
+				dSock = new DatagramSocket(0);
+			} catch (SocketException e2) {
+				Logger.getLogger("").log(Level.SEVERE, "Could not bind an UDP port", e2);
+			}
+		}
+		if (dSock!=null) serverPort = dSock.getLocalPort();
 	}
 
 	/**
@@ -216,12 +248,24 @@ public class ConnectionManager implements Runnable {
 	}
 
 	/**
-	 * Called, when a TCPConnection is established.
+	 * Called, when a UDPConnection is established.
 	 * @param connection the connection
 	 */
-	public void newConnection(TCPConnection connection) {
+	public void newConnection(UDPConnection connection) {
 		//Logger.getLogger("").log(Level.INFO, "new connection from/to: "+connection);
 		new P2PConnection(this, connection);
+	}
+
+	/**
+	 * Called, when a UDPConnection is closed.
+	 * @param connection the connection
+	 */
+	void connectionClosed(UDPConnection connection) {
+		synchronized (connections) {
+			if (connections.get(connection.getPeer())==connection) {
+				connections.remove(connection.getPeer());
+			}
+		}
 	}
 
 	/**
@@ -235,23 +279,52 @@ public class ConnectionManager implements Runnable {
 	}
 
 	/**
-	 * A thread to accept connections from other peers.
+	 * A thread to receive packets from other peers.
 	 */
 	@Override
 	public void run() {
-		try {
-			server = new ServerSocket(serverPort);
-			serverPort = server.getLocalPort();
-			Logger.getLogger("").log(Level.INFO, "listening on port "+server.getLocalPort());
-			
-			while (true) {
-				Socket s = server.accept();
-				new TCPConnection(this, s, networkKey);
+		if (dSock==null) return;
+		Logger.getLogger("").log(Level.INFO, "listening on UDP port "+serverPort);
+
+		byte[] buffer = new byte[RECV_BUFFER_SIZE];
+		DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+
+		while (!closed) {
+			try {
+				dSock.receive(packet);
+				handlePacket(packet.getData(), packet.getOffset(), packet.getLength(),
+						packet.getSocketAddress());
+			} catch (IOException e) {
+				if (!closed) Logger.getLogger("").log(Level.SEVERE, "Not listening on UDP port "+serverPort+" anymore", e);
+				break;
+			} catch (Throwable t) {
+				if (!closed) Logger.getLogger("").log(Level.WARNING, "", t);
 			}
 		}
-		catch (Exception e) {
-			Logger.getLogger("").log(Level.SEVERE, "Not listening on "+server.getLocalPort()+" anymore", e);
+	}
+
+	/**
+	 * Handle an incoming datagram.
+	 * @param data the buffer
+	 * @param off the offset
+	 * @param len the length
+	 * @param from the remote address
+	 */
+	private void handlePacket(byte[] data, int off, int len, SocketAddress from) {
+		if (closed) return;
+		if (!UDPConnection.isTunnelPacket(data, off, len)) return;
+
+		UDPConnection connection;
+		synchronized (connections) {
+			connection = connections.get(from);
 		}
+		if (connection==null) {
+			connection = new UDPConnection(this, dSock, from, networkKey);
+			synchronized (connections) {
+				connections.put(from, connection);
+			}
+		}
+		connection.handlePacket(data, off, len);
 	}
 
 	/**
@@ -303,14 +376,10 @@ public class ConnectionManager implements Runnable {
 	 * Stop this network and close all connections
 	 */
 	public void close() {
-		try {
-			scheduledExecutor.shutdownNow();
-			router.close();
-			if (server!=null) server.close();
-			//TODO close connections
-		} catch (IOException e) {
-			Logger.getLogger("").log(Level.WARNING, "", e);
-		}
+		closed = true;
+		scheduledExecutor.shutdownNow();
+		router.close();
+		if (dSock!=null) dSock.close();
 	}
 
 	/**
@@ -333,15 +402,13 @@ public class ConnectionManager implements Runnable {
 
 		@Override
 		public void run() {
-			Socket s;
-			//connector.addIP(host, port, null, null, "connecting", false);
-			try {
-				s = new Socket(host, port);
-				new TCPConnection(ConnectionManager.this, s, networkKey);
-				//connector.addIP(host, port, null, null, "connected", false);
-			} catch (Throwable e) {
-				//Logger.getLogger("").log(Level.WARNING, host+" "+port);
-				//connector.addIP(host, port, null, null, e.getMessage(), false);
+			if (dSock==null) return;
+			SocketAddress addr = new InetSocketAddress(host, port);
+			synchronized (connections) {
+				if (!connections.containsKey(addr)) {
+					UDPConnection c = new UDPConnection(ConnectionManager.this, dSock, addr, networkKey);
+					connections.put(addr, c);
+				}
 			}
 		}
 	}
