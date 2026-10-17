@@ -47,7 +47,7 @@ public class P2PConnection {
 	private byte[] myKeyPart;						// my key part
 	
 	private ConnectionManager connectionManager;	// the ConnectionManager
-	private TCPConnection connection;				// the underlying TCPConnection
+	private UDPConnection connection;				// the underlying UDPConnection
 	private ScheduledFuture<?> schedTimeout;		// used for a connect timeout
 	private PeerID remoteAddr;						// the remote PeerID
 	private AdvProperties remoteAccess;				// the remote access invitation
@@ -60,10 +60,10 @@ public class P2PConnection {
 	/**
 	 * Create a new P2PConnetion
 	 * @param connectionManager the ConnectionManager
-	 * @param connection the TCPConnection
+	 * @param connection the UDPConnection
 	 */
 	public P2PConnection(ConnectionManager connectionManager,
-			TCPConnection connection) {
+			UDPConnection connection) {
 
 		pingTime = new SlidingAverage(PING_BUCKET_LEN, 0);
 		this.connectionManager = connectionManager;
@@ -74,7 +74,7 @@ public class P2PConnection {
 		connection.setListener(this);
 		
 		AdvProperties access = connectionManager.getAccessCfg().filter("access", false);
-		connection.send(access.asBytes(), true);
+		connection.sendHandshakeAccess(access.asBytes());
 		state = P2PConnState.WAIT_FOR_ACCESS;
 
 		schedTimeout = 
@@ -85,7 +85,7 @@ public class P2PConnection {
 		}, 30, TimeUnit.SECONDS);
 	}
 
-	public TCPConnection getConnection() {
+	public UDPConnection getConnection() {
 		return connection;
 	}
 
@@ -113,13 +113,17 @@ public class P2PConnection {
 	}
 
 	/**
-	 * Called, when a packat arrived.
+	 * Called, when a handshake packet arrived. Because UDP may retransmit
+	 * handshake packets, this method has to be tolerant against duplicates.
+	 * @param phase UDPConnection.HANDSHAKE_ACCESS or UDPConnection.HANDSHAKE_KEY
 	 * @param packet the packet
 	 */
-	public void receive(byte[] packet) {
+	public void receiveHandshake(byte phase, byte[] packet) {
 		try {
-			switch (state) {
-				case WAIT_FOR_ACCESS: {
+			switch (phase) {
+				case UDPConnection.HANDSHAKE_ACCESS: {
+					if (remoteAddr != null) break;	// duplicate access packet
+
 					remoteAccess = new AdvProperties(packet);
 					remoteAddr = new PeerID(remoteAccess.getPropertyBytes("access.publicKey", null), true);
 					PublicKey netKey = CryptoUtils.decodeRSAPublicKey(
@@ -153,12 +157,14 @@ public class P2PConnection {
 					Cipher c = CryptoUtils.getAsymmetricCipher();
 					c.init(Cipher.ENCRYPT_MODE, remoteKey, rnd);
 
-					connection.send(c.doFinal(myKeyPart), true);
+					connection.sendHandshakeKey(c.doFinal(myKeyPart));
 
 					state = P2PConnState.WAIT_FOR_KEY;
 					break;
 				}
-				case WAIT_FOR_KEY: {
+				case UDPConnection.HANDSHAKE_KEY: {
+					if (state != P2PConnState.WAIT_FOR_KEY) break;	// duplicate or unexpected
+
 					PrivateKey myKey = CryptoUtils.decodeRSAPrivateKey(
 							connectionManager.getAccessCfg().getPropertyBytes("secret.access.privateKey", null));
 					Cipher c = CryptoUtils.getAsymmetricCipher();
@@ -178,13 +184,20 @@ public class P2PConnection {
 					connectionManager.newP2PConnection(this);
 					break;
 				}
-				case CONNECTED:
-					router.receive(this, packet);
-					break;
 			}
 		} catch (Throwable t) {
 			Logger.getLogger("").log(Level.WARNING, "closing connection to +"+remoteAddr, t);
 			connection.close();
+		}
+	}
+
+	/**
+	 * Called, when a data packet arrived.
+	 * @param packet the packet
+	 */
+	public void receive(byte[] packet) {
+		if (state == P2PConnState.CONNECTED) {
+			router.receive(this, packet);
 		}
 	}
 
