@@ -37,7 +37,7 @@ import org.p2pvpn.network.ConnectionManager;
 import org.p2pvpn.network.Connector;
 import org.p2pvpn.network.ConnectorListener;
 import org.p2pvpn.network.PeerID;
-import org.p2pvpn.network.TCPConnection;
+import org.p2pvpn.network.UDPConnection;
 import org.p2pvpn.network.VPNConnector;
 import org.p2pvpn.tools.AdvProperties;
 import org.p2pvpn.tools.CryptoUtils;
@@ -94,8 +94,8 @@ public class MainControl implements ConnectorListener {
 		ip = prefs.get("ip", "");
 		sendLimit = prefs.getDouble("sendLimit", 0);
 		recLimit = prefs.getDouble("recLimit", 0);
-		sendBufferSize = prefs.getInt("sendBufferSize", TCPConnection.DEFAULT_MAX_QUEUE);
-		tcpFlush = prefs.getBoolean("tcpFlush", TCPConnection.DEFAULT_TCP_FLUSH);
+		sendBufferSize = prefs.getInt("sendBufferSize", UDPConnection.DEFAULT_MAX_QUEUE);
+		tcpFlush = prefs.getBoolean("tcpFlush", UDPConnection.DEFAULT_TCP_FLUSH);
 
 		popupChat = prefs.getBoolean("popupChat", false);
 		
