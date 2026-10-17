@@ -64,6 +64,8 @@ public class DHT {
 	private BencodeString searchID = null;
 	private BigInteger searchIDInt = null;
 
+	private int announcePort = 0;	// the port other peers should connect to
+
 	private PriorityBlockingQueue<Contact> peerQueue;
 
 	private final Map<Contact, Integer> peerBad;
@@ -115,6 +117,15 @@ public class DHT {
 
 	public void setConnectionManager(ConnectionManager connectionManager) {
 		this.connectionManager = connectionManager;
+	}
+
+	/**
+	 * Set the port that should be announced to other peers. This is the port
+	 * of the VPN tunnel, which is not necessarily the port of the DHT socket.
+	 * @param announcePort the port
+	 */
+	public void setAnnouncePort(int announcePort) {
+		this.announcePort = announcePort;
 	}
 
 	public void setSearchID(BencodeString searchID) {
@@ -185,7 +196,7 @@ public class DHT {
 			BencodeMap a = new BencodeMap();
 			a.put(new BencodeString("id"), id);
 			a.put(new BencodeString("info_hash"), searchID);
-			a.put(new BencodeString("port"), new BencodeInt(dSock.getLocalPort()));
+			a.put(new BencodeString("port"), new BencodeInt(announcePort!=0 ? announcePort : dSock.getLocalPort()));
 			a.put(new BencodeString("token"), token);
 			m.put(new BencodeString("a"), a);
 			//System.out.println("get_peers: "+c);
