@@ -238,8 +238,11 @@ public class DHT {
 				Thread.sleep(ipsFound < 10 ? FAST_DELAY : SLOW_DELAY);
 				if (peerQueue.isEmpty()) {
 					ipsFound = 0;
-					ping(new InetSocketAddress("router.utorrent.com", 6881));
-					ping(new InetSocketAddress("router.bittorrent.com", 6881));
+					// (the old bootstrap routers do not answer any more)
+					ping(new InetSocketAddress("dht.libtorrent.org", 25401));
+					ping(new InetSocketAddress("dht.transmissionbt.com", 6881));
+					//ping(new InetSocketAddress("router.utorrent.com", 6881));
+					//ping(new InetSocketAddress("router.bittorrent.com", 6881));
 					//ping(new InetSocketAddress("dht.wifi.pps.jussieu.fr",6881));
 				} else {
 					List<Contact> best = new LinkedList<Contact>();
