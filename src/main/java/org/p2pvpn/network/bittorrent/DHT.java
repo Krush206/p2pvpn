@@ -169,7 +169,12 @@ public class DHT {
 		BencodeMap a = new BencodeMap();
 		a.put(new BencodeString("id"), id);
 		a.put(new BencodeString("info_hash"), searchID);
-		a.put(new BencodeString("want"), new BencodeString("n6"));
+		// ask for IPv4 and IPv6 node lists. (Asking for "n6" only made the
+		// DHT crawl IPv6 only, which broke the peer search on IPv4.)
+		BencodeList want = new BencodeList();
+		want.add(new BencodeString("n4"));
+		want.add(new BencodeString("n6"));
+		a.put(new BencodeString("want"), want);
 		m.put(new BencodeString("a"), a);
 		//System.out.println("get_peers: "+c);
 		sendPacket(c.getAddr(), m);
