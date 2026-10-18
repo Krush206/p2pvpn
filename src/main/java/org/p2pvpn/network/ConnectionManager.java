@@ -55,7 +55,7 @@ import org.p2pvpn.tools.SocketAddrStr;
  * @author Wolfgang Ginolas
  */
 public class ConnectionManager implements Runnable {
-    final static private String WHATISMYIP_URL = "http://whatismyip.com/automation/n09230945.asp";
+    final static private String WHATISMYIP_URL = "https://checkip.amazonaws.com";
 	final static private long WHATISMYIP_REFRESH_S = 10*60;
 
 	final static private double SEND_BUCKET_SIZE = 10 * 1024;
