@@ -29,11 +29,22 @@ import org.p2pvpn.tools.AdapterManager;
  * @author Wolfgang Ginolas
  */
 public class TunTapWindows extends TunTap {
+
+	private static boolean libLoaded = false;
+
     static {
 		try {
-			loadLib("clib\\libTunTapWindows.dll", "clib\\libTunTapWindows64.dll");
+			String arch = System.getProperty("os.arch", "");
+
+			if ("amd64".equals(arch) || "x86_64".equals(arch)) {
+				// 64 bit x86
+				loadLib("clib\\libTunTapWindows64.dll", "clib\\libTunTapWindows.dll");
+			} else {
+				loadLib("clib\\libTunTapWindows.dll", "clib\\libTunTapWindows64.dll");
+			}
+			libLoaded = true;
 		} catch (Throwable e) {
-			Logger.getLogger("").log(Level.SEVERE, "Could not load libTunTapWindows.dll", e);
+			Logger.getLogger("").log(Level.SEVERE, "Could not load the tun/tap library", e);
 		}
     }
 
@@ -45,7 +56,10 @@ public class TunTapWindows extends TunTap {
 	 * @throws java.lang.Exception
 	 */
     public TunTapWindows() throws Exception {
-        
+		if (!libLoaded) {
+			throw new Exception("The tun/tap library could not be loaded (see the log above).");
+		}
+
         /* try to install Win Tap Driver
         Integer erg = openTun();
         if(erg == 1){
