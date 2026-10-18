@@ -28,11 +28,25 @@ import java.util.logging.Logger;
  * @author Wolfgang  Ginolas
  */
 public class TunTapLinux extends TunTap {
+
+	private static boolean libLoaded = false;
+
     static {
 		try {
-			loadLib("clib/libTunTapLinux.so", "clib/libTunTapLinux64.so", "clib/libTunTapLinuxMips.so");
+			String arch = System.getProperty("os.arch", "");
+
+			if ("amd64".equals(arch) || "x86_64".equals(arch)) {
+				// 64 bit x86
+				loadLib("clib/libTunTapLinux64.so", "clib/libTunTapLinux.so");
+			} else if (arch.startsWith("mips")) {
+				loadLib("clib/libTunTapLinuxMips.so");
+			} else {
+				// 32 bit x86 and everything else: try all libraries
+				loadLib("clib/libTunTapLinux.so", "clib/libTunTapLinux64.so", "clib/libTunTapLinuxMips.so");
+			}
+			libLoaded = true;
 		} catch (Throwable e) {
-			Logger.getLogger("").log(Level.SEVERE, "Could not load libTunTapLinux.so", e);
+			Logger.getLogger("").log(Level.SEVERE, "Could not load the tun/tap library", e);
 		}
     }
 
@@ -44,6 +58,9 @@ public class TunTapLinux extends TunTap {
 	 * @throws java.lang.Exception
 	 */
     public TunTapLinux() throws Exception {
+    	if (!libLoaded) {
+			throw new Exception("The tun/tap library could not be loaded (see the log above).");
+		}
         if (1==openTun()) throw new Exception("Could not open '/dev/net/tun!'\n" +
 				"Please run this application as root.");
     }
