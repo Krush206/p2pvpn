@@ -1,0 +1,8 @@
+# build output
+target/
+
+# runtime state (contains private keys!)
+profile.ini
+
+# logs
+*.log
