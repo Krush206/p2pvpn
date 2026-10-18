@@ -20,7 +20,10 @@
 package org.p2pvpn.tuntap;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
@@ -35,37 +38,78 @@ public abstract class TunTap {
 
 	/**
 	 * Load a libary (*.so or *.dll).
+	 *
+	 * Every library is searched in this order:
+	 * 1. as a file relative to the current directory (e.g. when running
+	 *    directly from the source tree, where the clib directory is)
+	 * 2. as a resource in the classpath (e.g. when running the '-bin' jar,
+	 *    which contains the clib directory). The resource has to be extracted
+	 *    into a temporary file first, because Java cannot load a library
+	 *    directly out of a jar.
+	 *
+	 * If no library could be loaded, an exception listing every attempt is
+	 * thrown. (Only the last attempt used to be reported, which was very
+	 * misleading, e.g. a mips library on a x86-64 system.)
 	 * @param libs the libary names
-	 * @throws java.io.IOException
 	 */
-	static void loadLib(String... libs) throws Throwable {
-		Throwable e=null;
-		for(String lib : libs) {
+	static void loadLib(String... libs) throws IOException {
+		StringBuffer tried = new StringBuffer();
+		Throwable first = null;
+
+		for (String lib : libs) {
+			File file = new File(lib);
+			String resource = lib.replace('\\', '/');
 			try {
-				System.load(new File(lib).getCanonicalPath());
-				break;
-			} catch (Throwable eio) {e = eio;}
+				if (file.exists()) {
+					System.load(file.getCanonicalPath());
+					return;
+				}
+				if (loadLibFromClasspath(resource)) {
+					return;
+				}
+				tried.append("  ").append(lib).append(": no file '").append(file.getCanonicalPath())
+						.append("' and no such resource in the classpath\n");
+			} catch (Throwable t) {
+				if (first==null) first = t;
+				tried.append("  ").append(lib).append(": ").append(t.getMessage()).append('\n');
+			}
 		}
-		if (e!=null) throw e;
+
+		IOException result = new IOException("Could not load a native library for "
+				+ System.getProperty("os.name") + " " + System.getProperty("os.arch") + ". Tried:\n"
+				+ tried + "Run the program from a directory containing 'clib' or use the '-bin' jar.");
+		if (first!=null) result.initCause(first);
+		throw result;
 	}
 
-	/*static void loadLibFromRecsource(String lib, String suffix) throws IOException {
-		File tmp = File.createTempFile("lib", suffix);
+	/**
+	 * Load a libary from the classpath. Because Java cannot load a library
+	 * directly out of a jar or the classpath, it is copied into a temporary
+	 * file first.
+	 * @param resource the name of the resource (e.g. "clib/libTunTapLinux64.so")
+	 * @return was the resource found and loaded?
+	 */
+	static private boolean loadLibFromClasspath(String resource) throws IOException {
+		InputStream in = TunTap.class.getClassLoader().getResourceAsStream(resource);
+		if (in == null) return false;
+
+		String suffix = resource.substring(resource.lastIndexOf('.'));
+		File tmp = File.createTempFile("p2pvpn-", suffix);
 		tmp.deleteOnExit();
-		InputStream in = TunTap.class.getClassLoader().getResourceAsStream(lib);
+
 		OutputStream out = new FileOutputStream(tmp);
-
-		byte[] buffer = new byte[1024*8];
-		int len;
-
-		while (0<(len = in.read(buffer))) {
-			out.write(buffer, 0, len);
+		try {
+			byte[] buffer = new byte[8 * 1024];
+			int len;
+			while (0 < (len = in.read(buffer))) out.write(buffer, 0, len);
+		} finally {
+			in.close();
+			out.close();
 		}
-		in.close();
-		out.close();
 
 		System.load(tmp.getCanonicalPath());
-	}*/
+		return true;
+	}
 
 	/**
 	 * Return a TunTap object for the currently used operating system.
