@@ -83,6 +83,7 @@ public class ConnectionManager implements Runnable {
 
 	private TokenBucket sendLimit, recLimit;			// maximum bandwidth
 	private Pinger pinger;								// the Pinger
+	private HolePuncher holePuncher;					// the HolePuncher
 
 	private int sendBufferSize;							// the send buffer size
 	private boolean tcpFlush;							// flush after each packet send?
@@ -110,6 +111,7 @@ public class ConnectionManager implements Runnable {
 		sendLimit = new TokenBucket(0, SEND_BUCKET_SIZE);
 		recLimit = new TokenBucket(0, SEND_BUCKET_SIZE);
 		pinger = new Pinger(this);
+		holePuncher = new HolePuncher(this);
 
 		calcNetworkKey();
 
@@ -276,6 +278,7 @@ public class ConnectionManager implements Runnable {
 		//Logger.getLogger("").log(Level.INFO, "new P2P connection from/to: "+p2pConnection.getRemoteAddr()
 		//		+" ("+p2pConnection.getConnection()+")");
 		router.newP2PConnection(p2pConnection);
+		holePuncher.directConnection(p2pConnection);
 	}
 
 	/**
