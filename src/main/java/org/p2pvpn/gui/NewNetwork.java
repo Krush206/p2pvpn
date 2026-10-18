@@ -121,7 +121,7 @@ public class NewNetwork extends javax.swing.JDialog {
 
         jLabel5.setText("BitTorrent Tracker");
 
-        txtTracker.setText("http://tracker.thepiratebay.org:80/announce");
+        txtTracker.setText("http://tracker.opentrackr.org:1337/announce");
 
         org.jdesktop.layout.GroupLayout jPanel2Layout = new org.jdesktop.layout.GroupLayout(jPanel2);
         jPanel2.setLayout(jPanel2Layout);

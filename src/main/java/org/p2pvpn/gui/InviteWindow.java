@@ -29,8 +29,13 @@ import java.awt.event.ActionListener;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.URL;
 import java.util.Date;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.StringTokenizer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.ImageIcon;
@@ -38,7 +43,11 @@ import javax.swing.JFileChooser;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPopupMenu;
+import org.p2pvpn.network.ConnectionManager;
+import org.p2pvpn.network.PeerID;
+import org.p2pvpn.network.Router;
 import org.p2pvpn.tools.AdvProperties;
+import org.p2pvpn.tools.SocketAddrStr;
 
 /**
  * This window is shown, when the user wants to invite another persion.
@@ -242,16 +251,76 @@ private void btnCloseActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRS
 private void btnGenerateActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_btnGenerateActionPerformed
 	AdvProperties netCfg = mainControl.getNetworkCfg();
 	if (chkNetwork.isSelected()) {
-		txtInvitation.setText(netCfg.toString(null, false, true));
+		AdvProperties inv = netCfg.filter("", false);	// copy the network config
+		addMyAddresses(inv);
+		txtInvitation.setText(inv.toString(null, false, true));
 	} else {
 		Date date = null;
 		if (radDate.isSelected()) {
 			date = (Date)spnExpiryDate.getModel().getValue();
 		}
 		AdvProperties accessCfg = MainControl.genereteAccess(netCfg, date);
+		addMyAddresses(accessCfg);
 		txtInvitation.setText(accessCfg.toString(null, false, true));
 	}
 }//GEN-LAST:event_btnGenerateActionPerformed
+
+	/**
+	 * Add my addresses to an invitation, so that the invited peer knows where
+	 * it can find me. Without any address the peers can only find each other
+	 * through the BitTorrent tracker or the DHT.
+	 *
+	 * The most valuable addresses are the public ones: the address observed by
+	 * our direct connections ("local.extAddr4/6", see HolePuncher) and the
+	 * external address determined by checkWhatIsMyIP() (which is part of
+	 * "local.ips"). The addresses of the local network adapters are added
+	 * too, in case both peers are in the same network.
+	 */
+	private void addMyAddresses(AdvProperties inv) {
+		final int MAX_ADDRS = 5;
+
+		ConnectionManager cm = mainControl.getConnectionManager();
+		if (cm==null) return;
+
+		int port = cm.getServerPort();
+		if (port<=0) return;
+
+		Router router = cm.getRouter();
+		PeerID me = cm.getLocalAddr();
+		Set<String> addrs = new LinkedHashSet<String>();
+
+		collectAddresses(addrs, router.getPeerInfo(me, "local.extAddr4"), -1);
+		collectAddresses(addrs, router.getPeerInfo(me, "local.extAddr6"), -1);
+		collectAddresses(addrs, router.getPeerInfo(me, "local.ips"), port);
+		collectAddresses(addrs, router.getPeerInfo(me, "local.ip6s"), port);
+
+		int i = 0;
+		while (inv.containsKey("network.bootstrap.connectTo."+i)) i++;	// don't overwrite existing entries
+
+		for (String addr : addrs) {
+			if (i >= MAX_ADDRS) break;
+			inv.setProperty("network.bootstrap.connectTo."+(i++), addr);
+		}
+	}
+
+	/**
+	 * Add addresses to the set. The list contains either complete addresses
+	 * ("ip:port", port < 0) or space separated IPs (port >= 0).
+	 */
+	private void collectAddresses(Set<String> result, String list, int port) {
+		if (list==null) return;
+		StringTokenizer st = new StringTokenizer(list);
+		while (st.hasMoreTokens()) {
+			try {
+				InetSocketAddress a = port < 0
+					? SocketAddrStr.parseSocketAddr(st.nextToken())
+					: new InetSocketAddress(InetAddress.getByName(st.nextToken()), port);
+				if (a.getAddress()!=null) result.add(SocketAddrStr.socketAddrToStr(a));
+			} catch (Throwable t) {
+				// ignore this address
+			}
+		}
+	}
 
 /**
  * Save the invitation in a file
