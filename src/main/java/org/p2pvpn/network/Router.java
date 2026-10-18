@@ -23,6 +23,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,6 +39,7 @@ import java.util.Vector;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.p2pvpn.tools.SocketAddrStr;
 import org.p2pvpn.tools.VersionizedMap;
 
 /**
@@ -58,6 +60,7 @@ public class Router implements RoutungTableListener {
 
 	public static final byte INTERNAL_PORT_CHAT = -1;
 	public static final byte INTERNAL_PORT_PING = 1;
+	public static final byte INTERNAL_PORT_PUNCH = 2;
 	
 	private ConnectionManager connectionManager;	// the ConnectioionManager
 	private VPNConnector vpnConnector;				// the VpnConnector
@@ -404,12 +407,21 @@ public class Router implements RoutungTableListener {
         // check for local IPs
         if (!a.equals(connectionManager.getLocalAddr())) {
 			String port;
-			String ips, ip6s;
+			String ips, ip6s, extAddr4, extAddr6;
 			synchronized (this) {
 				port = peers.get(a).get("local.port");
 				ips = peers.get(a).get("local.ips");
 				ip6s = peers.get(a).get("local.ip6s");
+				extAddr4 = peers.get(a).get("local.extAddr4");
+				extAddr6 = peers.get(a).get("local.extAddr6");
 			}
+
+			// the public address of the peer as observed by one of its direct
+			// connections (see HolePuncher). This is the address needed for
+			// UDP hole punching.
+			addObserved(a, extAddr4);
+			addObserved(a, extAddr6);
+
             if (port!=null && ips!=null) {
                 StringTokenizer st = new StringTokenizer(ips);
                 while (st.hasMoreTokens()) {
@@ -434,7 +446,22 @@ public class Router implements RoutungTableListener {
             }
         }
     }
-   
+
+	/**
+	 * Add an observed public address of a peer to the list of known hosts.
+	 * @param a the peer
+	 * @param extAddr the address in the format "host:port" or null
+	 */
+	private void addObserved(PeerID a, String extAddr) {
+		if (extAddr==null) return;
+		try {
+			InetSocketAddress ext = SocketAddrStr.parseSocketAddr(extAddr);
+			connectionManager.getConnector().addIP(ext, a, "observed", "", false);
+		} catch (IllegalArgumentException ex) {
+			Logger.getLogger("").log(Level.WARNING, "bad observed address of "+a+": "+extAddr, ex);
+		}
+	}
+
 	public synchronized String getPeerInfo(PeerID peer, String key) {
 		VersionizedMap<String, String> db = peers.get(peer);
 		if (db==null) return null;
